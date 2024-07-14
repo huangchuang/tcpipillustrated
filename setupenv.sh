@@ -79,14 +79,14 @@ docker exec -it bsdi ip link set bsdiside up
 docker exec -it slip ip route add default via 140.252.13.66 dev slipside 
 
 #而对于bsdi来讲，对外访问的默认网关13.33
-docker exec -it bsdi ip route delete default                                    # ERROR: RTNETLINK answers: File exists
+docker exec -it bsdi ip route delete default                                    # Work around ERROR: RTNETLINK answers: File exists
 docker exec -it bsdi ip route add default via 140.252.13.33 dev eth0
 
 #对于sun来讲，要想访问p2p网络，需要添加下面的路由表
 docker exec -it sun ip route add 140.252.13.64/27 via 140.252.13.35 dev eth0    # slip is now able to ping sun successfully
 
 #对于svr4来讲，对外访问的默认网关是13.33
-docker exec -it svr4 ip route delete default                                    # ERROR: RTNETLINK answers: File exists
+docker exec -it svr4 ip route delete default                                    # Work around ERROR: RTNETLINK answers: File exists
 docker exec -it svr4 ip route add default via 140.252.13.33 dev eth0
 
 #对于svr4来讲，要访问p2p网关，需要添加下面的路由表
@@ -114,11 +114,11 @@ docker exec -it sun ip addr add 140.252.1.29/24 dev sunside # sun now can ping n
 docker exec -it sun ip link set sunside up
 
 #在sun里面，对外访问的默认路由是1.4
-docker exec -it sun ip route delete default                                     # ERROR: RTNETLINK answers: File exists
+docker exec -it sun ip route delete default                                     # Work around ERROR: RTNETLINK answers: File exists
 docker exec -it sun ip route add default via 140.252.1.4 dev sunside
 
 #在netb里面，对外访问的默认路由是1.4
-docker exec -it netb ip route delete default                                    # ERROR: RTNETLINK answers: File exists
+docker exec -it netb ip route delete default                                    # Work around ERROR: RTNETLINK answers: File exists
 docker exec -it netb ip route add default via 140.252.1.4 dev eth0
 
 #在netb里面，p2p这面可以没有IP地址，但是需要配置路由规则，访问到下面的二层网络
@@ -158,7 +158,7 @@ docker exec -it netb /root/proxy-arp start
 echo "config all routes"
 
 #在aix里面，默认外网访问路由是1.4
-docker exec -it aix ip route delete default                                     # ERROR: RTNETLINK answers: File exists
+docker exec -it aix ip route delete default                                     # Work around ERROR: RTNETLINK answers: File exists
 docker exec -it aix ip route add default via 140.252.1.4 dev eth0
 
 #在aix里面，可以通过下面的路由访问下面的二层网络
@@ -166,13 +166,13 @@ docker exec -it aix ip route add 140.252.13.32/27 via 140.252.1.29 dev eth0
 docker exec -it aix ip route add 140.252.13.64/27 via 140.252.1.29 dev eth0
 
 #同理配置solaris
-docker exec -it solaris ip route delete default                                 # ERROR: RTNETLINK answers: File exists
+docker exec -it solaris ip route delete default                                 # Work around ERROR: RTNETLINK answers: File exists
 docker exec -it solaris ip route add default via 140.252.1.4 dev eth0
 docker exec -it solaris ip route add 140.252.13.32/27 via 140.252.1.29 dev eth0
 docker exec -it solaris ip route add 140.252.13.64/27 via 140.252.1.29 dev eth0
 
 #同理配置gemini
-docker exec -it gemini ip route delete default                                  # ERROR: RTNETLINK answers: File exists
+docker exec -it gemini ip route delete default                                  # Work around ERROR: RTNETLINK answers: File exists
 docker exec -it gemini ip route add default via 140.252.1.4 dev eth0
 docker exec -it gemini ip route add 140.252.13.32/27 via 140.252.1.29 dev eth0
 docker exec -it gemini ip route add 140.252.13.64/27 via 140.252.1.29 dev eth0
@@ -202,12 +202,12 @@ docker exec -it gateway ip addr add 140.252.104.2/24 dev gatewayin
 docker exec -it gateway ip link set gatewayin up
 
 #在gateway里面，对外访问的默认路由是140.252.104.1/24
-docker exec -it gateway ip route delete default                                     # ERROR: RTNETLINK answers: File exists
+docker exec -it gateway ip route delete default                                     # Work around ERROR: RTNETLINK answers: File exists
 docker exec -it gateway ip route add default via 140.252.104.1 dev gatewayin
 
 iptables -t nat -A POSTROUTING -o ${publiceth} -j MASQUERADE
-ip route delete 140.252.13.32/27                                                    # ERROR: RTNETLINK answers: File exists
+ip route delete 140.252.13.32/27                                                    # Work around ERROR: RTNETLINK answers: File exists
 ip route add 140.252.13.32/27 via 140.252.104.2 dev gatewayout
 ip route add 140.252.13.64/27 via 140.252.104.2 dev gatewayout
-ip route delete 140.252.1.0/24                                                      # ERROR: RTNETLINK answers: File exists
+ip route delete 140.252.1.0/24                                                      # Work around ERROR: RTNETLINK answers: File exists
 ip route add 140.252.1.0/24 via 140.252.104.2 dev gatewayout

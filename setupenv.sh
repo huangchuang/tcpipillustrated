@@ -30,28 +30,20 @@ docker run --privileged=true --net none --name slip -d ${imagename}
 #创建两个网桥，代表两个二层网络
 echo "create bridges"
 
-ovs-vsctl add-br net1
+docker network create -d bridge --subnet 140.252.1.0/24   --gateway 140.252.1.1   --opt com.docker.network.bridge.name=net1 net1
+docker network create -d bridge --subnet 140.252.13.32/27 --gateway 140.252.13.33 --opt com.docker.network.bridge.name=net2 net2
 ip link set net1 up
-ovs-vsctl add-br net2
-ip link set net1 up
-
-#brctl addbr net1
-#brctl addbr net2
+ip link set net2 up
 
 #将所有的节点连接到两个网络
 echo "connect all containers to bridges"
-
-chmod +x ./pipework
-
-./pipework net1 aix 140.252.1.92/24
-./pipework net1 solaris 140.252.1.32/24
-./pipework net1 gemini 140.252.1.11/24
-./pipework net1 gateway 140.252.1.4/24
-./pipework net1 netb 140.252.1.183/24
-
-./pipework net2 bsdi 140.252.13.35/27
-./pipework net2 sun 140.252.13.33/27
-./pipework net2 svr4 140.252.13.34/27
+declare -A containers
+containers["aix"]="net1;140.252.1.92";   containers["solaris"]="net1;140.252.1.32"; containers["gemini"]="net1;140.252.1.11"; containers["gateway"]="net1;140.252.1.4"; 
+containers["netb"]="net1;140.252.1.183"; containers["bsdi"]="net2;140.252.13.35";   containers["sun"]="net2;140.252.13.36";   containers["svr4"]="net2;140.252.13.34";
+for container in "${!containers[@]}"; do
+    IFS=';' read -r -a array <<< "${containers[$container]}"
+    docker stop $container;     docker network disconnect none $container; docker network connect ${array[0]} $container --ip ${array[1]};  docker start $container
+done
 
 #添加从slip到bsdi的p2p网络
 echo "add p2p from slip to bsdi"
@@ -61,12 +53,12 @@ ip link add name slipside mtu 1500 type veth peer name bsdiside mtu 1500
 #把其中一个塞到slip的网络namespace里面
 
 DOCKERPID1=$(docker inspect '--format={{ .State.Pid }}' slip)
-ln -s /proc/${DOCKERPID1}/ns/net /var/run/netns/${DOCKERPID1}
+# ln -s /proc/${DOCKERPID1}/ns/net /var/run/netns/${DOCKERPID1}
 ip link set slipside netns ${DOCKERPID1}
 
 #把另一个塞到bsdi的网络的namespace里面
 DOCKERPID2=$(docker inspect '--format={{ .State.Pid }}' bsdi)
-ln -s /proc/${DOCKERPID2}/ns/net /var/run/netns/${DOCKERPID2}
+# ln -s /proc/${DOCKERPID2}/ns/net /var/run/netns/${DOCKERPID2}
 ip link set bsdiside netns ${DOCKERPID2}
 
 #给slip这面的网卡添加IP地址
@@ -82,19 +74,23 @@ docker exec -it bsdi ip link set bsdiside up
 #p2p网络的cidr是140.252.13.64/27，而下面的二层网络的cidr是140.252.13.32/27
 
 #所以对于slip来讲，对外访问的默认网关是13.66
-docker exec -it slip ip route add default via 140.252.13.66 dev slipside
+# Network is unreachable as there are no network routes
+# After adding a route, slip is now able to ping bsdi (140.252.13.35) via slipside in the same subnet 140.252.13.64/27
+docker exec -it slip ip route add default via 140.252.13.66 dev slipside 
 
 #而对于bsdi来讲，对外访问的默认网关13.33
-docker exec -it bsdi ip route add default via 140.252.13.33 dev eth1
+docker exec -it bsdi ip route delete default                                    # ERROR: RTNETLINK answers: File exists
+docker exec -it bsdi ip route add default via 140.252.13.33 dev eth0
 
 #对于sun来讲，要想访问p2p网络，需要添加下面的路由表
-docker exec -it sun ip route add 140.252.13.64/27 via 140.252.13.35 dev eth1
+docker exec -it sun ip route add 140.252.13.64/27 via 140.252.13.35 dev eth0    # slip is now able to ping sun successfully
 
 #对于svr4来讲，对外访问的默认网关是13.33
-docker exec -it svr4 ip route add default via 140.252.13.33 dev eth1
+docker exec -it svr4 ip route delete default                                    # ERROR: RTNETLINK answers: File exists
+docker exec -it svr4 ip route add default via 140.252.13.33 dev eth0
 
 #对于svr4来讲，要访问p2p网关，需要添加下面的路由表
-docker exec -it svr4 ip route add 140.252.13.64/27 via 140.252.13.35 dev eth1
+docker exec -it svr4 ip route add 140.252.13.64/27 via 140.252.13.35 dev eth0   # slip is now able to ping svr4 successfully
 
 #这个时候，从slip是可以ping的通下面的所有的节点的。
 
@@ -105,23 +101,25 @@ ip link add name sunside mtu 1500 type veth peer name netbside mtu 1500
 
 #一面塞到sun的网络namespace里面
 DOCKERPID3=$(docker inspect '--format={{ .State.Pid }}' sun)
-ln -s /proc/${DOCKERPID3}/ns/net /var/run/netns/${DOCKERPID3}
+# ln -s /proc/${DOCKERPID3}/ns/net /var/run/netns/${DOCKERPID3}
 ip link set sunside netns ${DOCKERPID3}
 
 #另一面塞到netb的网络的namespace里面
 DOCKERPID4=$(docker inspect '--format={{ .State.Pid }}' netb)
-ln -s /proc/${DOCKERPID4}/ns/net /var/run/netns/${DOCKERPID4}
+# ln -s /proc/${DOCKERPID4}/ns/net /var/run/netns/${DOCKERPID4}
 ip link set netbside netns ${DOCKERPID4}
 
-#给sun里面的网卡添加地址
-docker exec -it sun ip addr add 140.252.1.29/24 dev sunside
+#给sun里面的网卡添加地址: 
+docker exec -it sun ip addr add 140.252.1.29/24 dev sunside # sun now can ping netb (140.252.1.183) via sunside interface (140.252.1.0/24)
 docker exec -it sun ip link set sunside up
 
 #在sun里面，对外访问的默认路由是1.4
+docker exec -it sun ip route delete default                                     # ERROR: RTNETLINK answers: File exists
 docker exec -it sun ip route add default via 140.252.1.4 dev sunside
 
 #在netb里面，对外访问的默认路由是1.4
-docker exec -it netb ip route add default via 140.252.1.4 dev eth1
+docker exec -it netb ip route delete default                                    # ERROR: RTNETLINK answers: File exists
+docker exec -it netb ip route add default via 140.252.1.4 dev eth0
 
 #在netb里面，p2p这面可以没有IP地址，但是需要配置路由规则，访问到下面的二层网络
 docker exec -it netb ip link set netbside up
@@ -136,13 +134,13 @@ echo "config arp proxy for netb"
 
 #配置proxy_arp为1
 
-docker exec -it netb bash -c "echo 1 > /proc/sys/net/ipv4/conf/eth1/proxy_arp"
-docker exec -it netb bash -c "echo 1 > /proc/sys/net/ipv4/conf/netbside/proxy_arp"
+docker exec -it netb bash -c "echo 1 > /proc/sys/net/ipv4/conf/eth0/proxy_arp"
+docker exec -it netb bash -c "echo 1 > /proc/sys/net/ipv4/conf/netbside/proxy_arp" # sun now can ping gateway (140.252.1.4) after this
 
 #通过一个脚本proxy-arp脚本设置arp响应
 
 #设置proxy-arp.conf
-#eth1 140.252.1.29
+#eth0 140.252.1.29
 #netbside 140.252.1.92
 #netbside 140.252.1.32
 #netbside 140.252.1.11
@@ -160,25 +158,28 @@ docker exec -it netb /root/proxy-arp start
 echo "config all routes"
 
 #在aix里面，默认外网访问路由是1.4
-docker exec -it aix ip route add default via 140.252.1.4 dev eth1
+docker exec -it aix ip route delete default                                     # ERROR: RTNETLINK answers: File exists
+docker exec -it aix ip route add default via 140.252.1.4 dev eth0
 
 #在aix里面，可以通过下面的路由访问下面的二层网络
-docker exec -it aix ip route add 140.252.13.32/27 via 140.252.1.29 dev eth1
-docker exec -it aix ip route add 140.252.13.64/27 via 140.252.1.29 dev eth1
+docker exec -it aix ip route add 140.252.13.32/27 via 140.252.1.29 dev eth0
+docker exec -it aix ip route add 140.252.13.64/27 via 140.252.1.29 dev eth0
 
 #同理配置solaris
-docker exec -it solaris ip route add default via 140.252.1.4 dev eth1
-docker exec -it solaris ip route add 140.252.13.32/27 via 140.252.1.29 dev eth1
-docker exec -it solaris ip route add 140.252.13.64/27 via 140.252.1.29 dev eth1
+docker exec -it solaris ip route delete default                                 # ERROR: RTNETLINK answers: File exists
+docker exec -it solaris ip route add default via 140.252.1.4 dev eth0
+docker exec -it solaris ip route add 140.252.13.32/27 via 140.252.1.29 dev eth0
+docker exec -it solaris ip route add 140.252.13.64/27 via 140.252.1.29 dev eth0
 
 #同理配置gemini
-docker exec -it gemini ip route add default via 140.252.1.4 dev eth1
-docker exec -it gemini ip route add 140.252.13.32/27 via 140.252.1.29 dev eth1
-docker exec -it gemini ip route add 140.252.13.64/27 via 140.252.1.29 dev eth1
+docker exec -it gemini ip route delete default                                  # ERROR: RTNETLINK answers: File exists
+docker exec -it gemini ip route add default via 140.252.1.4 dev eth0
+docker exec -it gemini ip route add 140.252.13.32/27 via 140.252.1.29 dev eth0
+docker exec -it gemini ip route add 140.252.13.64/27 via 140.252.1.29 dev eth0
 
 #通过配置路由可以连接到下面的二层网络
-docker exec -it gateway ip route add 140.252.13.32/27 via 140.252.1.29 dev eth1
-docker exec -it gateway ip route add 140.252.13.64/27 via 140.252.1.29 dev eth1
+docker exec -it gateway ip route add 140.252.13.32/27 via 140.252.1.29 dev eth0
+docker exec -it gateway ip route add 140.252.13.64/27 via 140.252.1.29 dev eth0
 
 #到此为止，上下的二层网络都能相互访问了
 
@@ -193,7 +194,7 @@ ip link set gatewayout up
 
 #一面塞到gateway的网络的namespace里面
 DOCKERPID5=$(docker inspect '--format={{ .State.Pid }}' gateway)
-ln -s /proc/${DOCKERPID5}/ns/net /var/run/netns/${DOCKERPID5}
+# ln -s /proc/${DOCKERPID5}/ns/net /var/run/netns/${DOCKERPID5}
 ip link set gatewayin netns ${DOCKERPID5}
 
 #给gateway里面的网卡添加地址
@@ -201,9 +202,12 @@ docker exec -it gateway ip addr add 140.252.104.2/24 dev gatewayin
 docker exec -it gateway ip link set gatewayin up
 
 #在gateway里面，对外访问的默认路由是140.252.104.1/24
+docker exec -it gateway ip route delete default                                     # ERROR: RTNETLINK answers: File exists
 docker exec -it gateway ip route add default via 140.252.104.1 dev gatewayin
 
 iptables -t nat -A POSTROUTING -o ${publiceth} -j MASQUERADE
+ip route delete 140.252.13.32/27                                                    # ERROR: RTNETLINK answers: File exists
 ip route add 140.252.13.32/27 via 140.252.104.2 dev gatewayout
 ip route add 140.252.13.64/27 via 140.252.104.2 dev gatewayout
+ip route delete 140.252.1.0/24                                                      # ERROR: RTNETLINK answers: File exists
 ip route add 140.252.1.0/24 via 140.252.104.2 dev gatewayout
